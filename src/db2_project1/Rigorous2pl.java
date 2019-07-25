@@ -8,6 +8,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Queue;
 
 import db2_project1.Transaction.State;
 
@@ -17,16 +19,16 @@ public class Rigorous2pl {
 	static int timestamp = 0;
 
 	enum OperationType {
-		READ, WRITE;
+		UNKNOWN, READ, WRITE, COMMIT;
 	}
 
 	public static void main(String[] args) {
-		processFile();
+		processFile("src/1.txt");
 	}
 
-	private static void processFile() {
+	private static void processFile(String filePath) {
 		try {
-			FileReader fr = new FileReader("src/input.txt");
+			FileReader fr = new FileReader(filePath);
 			BufferedReader br = new BufferedReader(fr);
 			String line;
 			while ((line = br.readLine()) != null) {
@@ -125,9 +127,7 @@ public class Rigorous2pl {
 	}
 
 	private static void endTransaction(int transactionID) {
-		// TODO: Complete this....
-		System.out.println("end " + transactionID);
-
+		commitTransaction(transactionTable.get(transactionID));
 	}
 
 	private static void executeOperation(int transactionID, String dataItem, OperationType operationType) {
@@ -189,8 +189,14 @@ public class Rigorous2pl {
 			l = writeRead(t, dataItem, l);
 		} else if (l.operationType == OperationType.WRITE && operationType == OperationType.WRITE) {
 			l = writeWrite(t, dataItem, l);
-		} else {
-			// this is not possible...
+		} else if (l.operationType == OperationType.UNKNOWN && operationType == OperationType.READ) {
+			l.operationType = OperationType.READ;
+			System.out.println("Transaction " + t.id + " has acquired readlock on " + dataItem);
+			l.transactionIdsWithReadLock.add(t.id);
+		} else if (l.operationType == OperationType.UNKNOWN && operationType == OperationType.WRITE) {
+			l.operationType = OperationType.WRITE;
+			System.out.println("Transaction " + t.id + " has acquired write lock on " + dataItem);
+			l.transactionIdWithWriteLock = t.id;
 		}
 		lockTable.put(dataItem, l);
 
@@ -239,7 +245,7 @@ public class Rigorous2pl {
 					l.transactionIdWithWriteLock = t.id;
 					System.out.println("Transaction " + old.id + " aborted since it was younger than " + t.id);
 					System.out.println(t.id + " has now acquired write lock on " + dataItem);
-					releaseLocks(old, dataItem);
+					releaseLocks(old, dataItem, l);
 				}
 			}
 		} else {
@@ -278,7 +284,8 @@ public class Rigorous2pl {
 				t.state = State.BLOCKED;
 				t.pendingOperations.add(new Operation(OperationType.WRITE, dataItem));
 				System.out.println("Transaction " + t.id + " has been blocked because it is younger");
-				for (int i = 0; i < readlist.size(); i++) {
+				int i = 0;
+				while (i < readlist.size()) {
 					if (t.id >= readlist.get(i)) {
 						// do not wound transactions that are older than t
 						i++;
@@ -335,7 +342,7 @@ public class Rigorous2pl {
 
 				System.out.println("Transaction " + tWithWriteLock.id + " aborted because it is younger than " + t.id);
 				System.out.println(t.id + " has acquired read lock on " + dataItem);
-				releaseLocks(tWithWriteLock, dataItem);
+				releaseLocks(tWithWriteLock, dataItem, l);
 			}
 
 		}
@@ -366,30 +373,139 @@ public class Rigorous2pl {
 			l.transactionIdWithWriteLock = t.id;
 			System.out.println("Transaction " + tWithWriteLock.id + " has been blocked since " + t.id
 					+ " has higher timestamp and thus acquired the write lock.");
-			releaseLocks(tWithWriteLock, dataItem);
+			releaseLocks(tWithWriteLock, dataItem, l);
 		}
 		return l;
 	}
 
 	private static void blockedTransaction(Transaction t, String dataItem, OperationType operationType) {
-		// TODO: Complete this....
 		// In blocked transaction we have to first check the lock table and if the lock
-		// table contains data item then
-		// add the transactionId to the lock's waiting list and insert into lock table
+		// table contains data item then add the transactionId to the lock's waiting
+		// list and insert into lock table
 		// map.
+
+		if (lockTable.containsKey(dataItem)) {
+			Lock l = lockTable.get(dataItem);
+			l.waitingList.add(t.id);
+			lockTable.put(dataItem, l);
+		}
 		// If transaction's itemsLocked doesnt contain dataitem add it, add a pending
 		// operation and insert in transaction tablemap.
+		if (!t.itemsLocked.contains(dataItem)) {
+			t.itemsLocked.add(dataItem);
+		}
+		t.pendingOperations.add(new Operation(operationType, dataItem));
+		transactionTable.put(t.id, t);
+		System.out.println("Transaction " + t.id + " is currently Blocked. Operation " + operationType + " on dataitem "
+				+ dataItem + " is added to waiting list.");
+		System.out.println("And transaction is added to lock table's waiting list");
 	}
 
 	private static void abortTransaction(Transaction t) {
-		// TODO: Complete this....
 		// set state to Aborted
-		// releaseLocks on all items locked by t
+		t.state = State.ABORTED;
+		List<String> itemsLocked = t.itemsLocked;
+		System.out.println("Releasing items locked by transaction " + t.id);
+		for (String item : itemsLocked) {
+			// releaseLocks on all items locked by t
+			releaseLocks(t, item, lockTable.get(item));
+		}
 		// update t in transactionTable
+		transactionTable.put(t.id, t);
 	}
 
-	private static void releaseLocks(Transaction old, String dataItem) {
-		// TODO: Complete this....
+	private static void releaseLocks(Transaction old, String dataItem, Lock l) {
+		if (l.operationType == OperationType.WRITE || l.transactionIdsWithReadLock.size() == 1) {
+			// only one other transaction with read or write lock on dataitem
+			// need to trigger operations for transactions in the lock's waiting list
+			PriorityQueue<Integer> waitingTransactions = l.waitingList;
+			l.operationType = OperationType.UNKNOWN;
+			if (l.transactionIdsWithReadLock.size() == 1) {
+				System.out.println("Transaction " + old.id + " has release read lock on " + dataItem);
+				l.transactionIdsWithReadLock.clear();
+			} else {
+				System.out.println("Transaction " + old.id + " has release write lock on " + dataItem);
+			}
+			lockTable.put(dataItem, l);
+			if (waitingTransactions.isEmpty()) {
+				lockTable.remove(dataItem);
+			} else {
+				while (!l.waitingList.isEmpty()) {
+					int waitingTransactionId = l.waitingList.remove();
+					Transaction t = transactionTable.get(waitingTransactionId);
+					t = acquireLocks(t, dataItem, l);
+					transactionTable.put(waitingTransactionId, t);
+					if (t.state != Transaction.State.COMMITED) {
+						return;
+					}
+				}
+			}
+			lockTable.remove(dataItem);
+		} else if (l.operationType == OperationType.READ) {
+			List<Integer> readers = l.transactionIdsWithReadLock;
+			for (int i = 0; i < readers.size(); i++) {
+				if (old.id == readers.get(i)) {
+					readers.remove(i);
+				}
+			}
+			System.out.println("Transaction " + old.id + " has release read lock on " + dataItem);
+			lockTable.put(dataItem, l);
+		}
+	}
+
+	private static Transaction acquireLocks(Transaction t, String dataItem, Lock l) {
+		Queue<Operation> pendingOperations = t.pendingOperations;
+		t.state = State.ACTIVE;
+		transactionTable.put(t.id, t);
+
+		if (!pendingOperations.isEmpty()) {
+			System.out.println(
+					"Transaction " + t.id + " has changed from blocked to active. Running its waiting operations...");
+			while (!pendingOperations.isEmpty()) {
+				Operation o = pendingOperations.remove();
+				switch (o.operationType) {
+				case READ:
+				case WRITE:
+					executeOperation(t.id, o.dataItem, o.operationType);
+					break;
+				case COMMIT:
+					commitTransaction(t);
+				case UNKNOWN:
+				default:
+					break;
+				}
+			}
+		}
+
+		lockTable.put(dataItem, l);
+
+		return t;
+	}
+
+	private static void commitTransaction(Transaction t) {
+		switch (t.state) {
+		case ACTIVE:
+			System.out.println("Commiting transaction and releasing its locks");
+			t.state = State.COMMITED;
+			List<String> itemsLocked = t.itemsLocked;
+			for (String item : itemsLocked) {
+				releaseLocks(t, item, lockTable.get(item));
+			}
+			System.out.println("Committed transaction and released its locks");
+			break;
+		case BLOCKED:
+			t.pendingOperations.add(new Operation(OperationType.COMMIT, ""));
+			transactionTable.put(t.id, t);
+			System.out.println("Commit operation is added as pending for transaction " + t.id);
+			break;
+		case ABORTED:
+		case COMMITED:
+			System.out.println("Cannot commit since transaction is already " + t.state);
+			break;
+		case UNKNOWN:
+		default:
+			break;
+		}
 	}
 
 }
