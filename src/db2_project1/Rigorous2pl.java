@@ -23,11 +23,21 @@ public class Rigorous2pl {
 	}
 
 	public static void main(String[] args) {
-		processFile("src/2.txt");
+//		runAllFiles();
+		processFile("src/1.txt");
+	}
 
+	private static void runAllFiles() {
+		for (int i = 1; i <= 7; i++) {
+			String file = "src/" + i + ".txt";
+			processFile(file);
+			transactionTable.clear();
+			lockTable.clear();
+		}
 	}
 
 	private static void processFile(String filePath) {
+		System.out.println("Starting processing " + filePath);
 		try {
 			FileReader fr = new FileReader(filePath);
 			BufferedReader br = new BufferedReader(fr);
@@ -469,6 +479,9 @@ public class Rigorous2pl {
 	}
 
 	private static void releaseLocks(Transaction old, String dataItem, Lock l) {
+		if (l == null) {
+			return;
+		}
 		if (l.operationType == OperationType.WRITE || l.transactionIdsWithReadLock.size() == 1) {
 			// only one other transaction with read or write lock on dataitem
 			// need to trigger operations for transactions in the lock's waiting list
