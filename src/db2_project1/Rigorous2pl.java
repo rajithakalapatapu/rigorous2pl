@@ -23,7 +23,7 @@ public class Rigorous2pl {
 	}
 
 	public static void main(String[] args) {
-		processFile("src/1.txt");
+		processFile("src/7.txt");
 
 	}
 
@@ -256,6 +256,7 @@ public class Rigorous2pl {
 			// least element
 			Collections.sort(readlist);
 			int oldestTransaction = readlist.get(0);
+
 			if (t.id == oldestTransaction) {
 				// Upgrade lock
 				System.out.println("Transaction " + t.id + " has upgraded its lock on " + dataItem
@@ -292,15 +293,16 @@ public class Rigorous2pl {
 					Transaction tOld = transactionTable.get(readlist.get(i));
 					if (tOld.itemsLocked.contains(dataItem)) {
 						// tOld will wound t
-						t.state = State.BLOCKED;
-						Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
-						t.pendingOperations.add(pendingOp);
-						transactionTable.put(t.id, t);
-						l.waitingList.add(t.id);
-						System.out.println("Transaction " + t.id + " was wounded by " + tOld.id);
-						System.out.println("Current write operation is added as pending for " + t.id);
-						System.out.println(
-								"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
+						abortTransaction(t);
+//						t.state = State.BLOCKED;
+//						Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
+//						t.pendingOperations.add(pendingOp);
+//						transactionTable.put(t.id, t);
+//						l.waitingList.add(t.id);
+//						System.out.println("Transaction " + t.id + " was wounded by " + tOld.id);
+//						System.out.println("Current write operation is added as pending for " + t.id);
+//						System.out.println(
+//								"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
 
 						readlist.remove(i);
 						break;
@@ -349,31 +351,33 @@ public class Rigorous2pl {
 			System.out.println("Transaction " + t.id + " has downgraded its write lock to read lock for " + dataItem);
 		} else {
 			Transaction tWithWriteLock = transactionTable.get(l.transactionIdWithWriteLock);
-			if (tWithWriteLock.timestamp < t.timestamp) {
-				// tWithWriteLock will wound t. Put t in blocked state and restart transaction
-				t.state = State.BLOCKED;
-				Operation pendingOp = new Operation(OperationType.READ, dataItem);
-				t.pendingOperations.add(pendingOp);
-				transactionTable.put(t.id, t);
-				l.waitingList.add(t.id);
-				System.out.println("Transaction " + t.id + " was wounded by " + tWithWriteLock.id);
-				System.out.println("Current read operation is added as pending for " + t.id);
-				System.out
-						.println("Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
-			} else {
-				// tWithWriteLock will be put to wait and the older process (t) will get the
-				// read lock
-				tWithWriteLock.state = State.ABORTED;
-				transactionTable.put(tWithWriteLock.id, tWithWriteLock);
+			applyWoundWait(tWithWriteLock, t, new Operation(OperationType.WRITE, dataItem), l);
 
-				l.transactionIdWithWriteLock = 0;
-				l.operationType = OperationType.READ;
-				l.transactionIdsWithReadLock.add(t.id);
-
-				System.out.println("Transaction " + tWithWriteLock.id + " aborted because it is younger than " + t.id);
-				System.out.println(t.id + " has acquired read lock on " + dataItem);
-				releaseLocks(tWithWriteLock, dataItem, l);
-			}
+//			if (tWithWriteLock.timestamp < t.timestamp) {
+//				// tWithWriteLock will wound t. Put t in blocked state and restart transaction
+//				t.state = State.BLOCKED;
+//				Operation pendingOp = new Operation(OperationType.READ, dataItem);
+//				t.pendingOperations.add(pendingOp);
+//				transactionTable.put(t.id, t);
+//				l.waitingList.add(t.id);
+//				System.out.println("Transaction " + t.id + " was wounded by " + tWithWriteLock.id);
+//				System.out.println("Current read operation is added as pending for " + t.id);
+//				System.out
+//						.println("Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
+//			} else {
+//				// tWithWriteLock will be put to wait and the older process (t) will get the
+//				// read lock
+//				tWithWriteLock.state = State.ABORTED;
+//				transactionTable.put(tWithWriteLock.id, tWithWriteLock);
+//
+//				l.transactionIdWithWriteLock = 0;
+//				l.operationType = OperationType.READ;
+//				l.transactionIdsWithReadLock.add(t.id);
+//
+//				System.out.println("Transaction " + tWithWriteLock.id + " aborted because it is younger than " + t.id);
+//				System.out.println(t.id + " has acquired read lock on " + dataItem);
+//				releaseLocks(tWithWriteLock, dataItem, l);
+//			}
 
 		}
 		if (!t.itemsLocked.contains(dataItem)) {
@@ -385,27 +389,46 @@ public class Rigorous2pl {
 
 	private static Lock writeWrite(Transaction t, String dataItem, Lock l) {
 		Transaction tWithWriteLock = transactionTable.get(l.transactionIdWithWriteLock);
-		if (tWithWriteLock.timestamp < t.timestamp) {
-			// tWithWriteLock will wound t. Put t in blocked state and restart transaction
-			t.state = State.BLOCKED;
-			Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
-			t.pendingOperations.add(pendingOp);
-			transactionTable.put(t.id, t);
-			l.waitingList.add(t.id);
-			System.out.println("Transaction " + t.id + " was wounded by " + tWithWriteLock.id);
-			System.out.println("Current write operation is added as pending for " + t.id);
-			System.out.println("Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
-		} else {
-			// tWithWriteLock will be put to wait and the older process (t) will get the
-			// write lock
-			tWithWriteLock.state = State.ABORTED;
-			transactionTable.put(tWithWriteLock.id, tWithWriteLock);
-			l.transactionIdWithWriteLock = t.id;
-			System.out.println("Transaction " + tWithWriteLock.id + " has been blocked since " + t.id
-					+ " has higher timestamp and thus acquired the write lock.");
-			releaseLocks(tWithWriteLock, dataItem, l);
-		}
+		applyWoundWait(tWithWriteLock, t, new Operation(OperationType.WRITE, dataItem), l);
+
+//		if (tWithWriteLock.timestamp < t.timestamp) {
+//			// tWithWriteLock will wound t. Put t in blocked state and restart transaction
+//			t.state = State.BLOCKED;
+//			Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
+//			t.pendingOperations.add(pendingOp);
+//			transactionTable.put(t.id, t);
+//			l.waitingList.add(t.id);
+//			System.out.println("Transaction " + t.id + " was wounded by " + tWithWriteLock.id);
+//			System.out.println("Current write operation is added as pending for " + t.id);
+//			System.out.println("Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
+//		} else {
+//			// tWithWriteLock will be put to wait and the older process (t) will get the
+//			// write lock
+//			tWithWriteLock.state = State.ABORTED;
+//			transactionTable.put(tWithWriteLock.id, tWithWriteLock);
+//			l.transactionIdWithWriteLock = t.id;
+//			System.out.println("Transaction " + tWithWriteLock.id + " has been blocked since " + t.id
+//					+ " has higher timestamp and thus acquired the write lock.");
+//			releaseLocks(tWithWriteLock, dataItem, l);
+//		}
+
 		return l;
+	}
+
+	private static void applyWoundWait(Transaction t1, Transaction t2, Operation pendingOperation, Lock l) {
+		if (t1.timestamp < t2.timestamp) {
+			// t1 will abort t2
+			System.out.println("Transaction " + t1.id + " has aborted transaction " + t2.id);
+			abortTransaction(t2);
+		} else {
+			// t1 will wait in blocked state
+			t1.state = State.BLOCKED;
+			t1.pendingOperations.add(pendingOperation);
+			transactionTable.put(t1.id, t1);
+			l.waitingList.add(t1.id);
+			System.out.println(
+					"Transaction " + t1.id + " is now waiting for " + pendingOperation + " on Transaction " + t2.id);
+		}
 	}
 
 	private static void blockedTransaction(Transaction t, String dataItem, OperationType operationType) {
