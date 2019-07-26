@@ -23,7 +23,7 @@ public class Rigorous2pl {
 	}
 
 	public static void main(String[] args) {
-		processFile("src/7.txt");
+		processFile("src/2.txt");
 
 	}
 
@@ -48,7 +48,9 @@ public class Rigorous2pl {
 		String token = line.replace(" ", "");
 		int transactionID = extractTransactionID(token);
 
-		System.out.println("Executing operation " + token + "....");
+//		System.out.println("\n" + token + transactionTable + lockTable);
+		System.out.println("\n" + token);
+
 		switch (token.charAt(0)) {
 		case 'b':
 			beginTransaction(transactionID);
@@ -112,8 +114,7 @@ public class Rigorous2pl {
 		timestamp = timestamp + 1;
 		State state = Transaction.State.ACTIVE;
 		transactionTable.put(transactionID, new Transaction(transactionID, timestamp, state));
-		System.out.println("Transaction with id " + transactionID + " has timestamp " + timestamp
-				+ ". It's current state is " + state);
+		System.out.println("Starting active transaction with id " + transactionID + " and timestamp as " + timestamp);
 
 	}
 
@@ -141,10 +142,10 @@ public class Rigorous2pl {
 			blockedTransaction(t, dataItem, operationType);
 			break;
 		case COMMITED:
-			System.out.println("Transaction " + transactionID + " is committed");
+			System.out.println("Transaction " + transactionID + " is committed. Ignoring...");
 			break;
 		case ABORTED:
-			System.out.println("Transaction " + transactionID + " is aborted");
+			System.out.println("Transaction " + transactionID + " is aborted. Ignoring...");
 			break;
 		case UNKNOWN:
 		default:
@@ -159,13 +160,11 @@ public class Rigorous2pl {
 			Lock lock = new Lock(dataItem, operationType);
 			switch (operationType) {
 			case READ:
-				System.out.println("The transaction " + t.id + " is active.");
-				System.out.println("Transaction with id " + t.id + " has acquired Read lock on  " + dataItem);
+				System.out.println("Transaction " + t.id + " has acquired Read lock on " + dataItem);
 				lock.transactionIdsWithReadLock.add(t.id);
 				break;
 			case WRITE:
-				System.out.println("The transaction " + t.id + " is active.");
-				System.out.println("Transaction with id " + t.id + " has acquired Write lock on  " + dataItem);
+				System.out.println("Transaction " + t.id + " has acquired Write lock on " + dataItem);
 				lock.transactionIdWithWriteLock = t.id;
 				break;
 			default:
@@ -226,28 +225,29 @@ public class Rigorous2pl {
 			} else {
 				// conflict between two different transactions hence apply wound-wait
 				Transaction old = transactionTable.get(l.transactionIdsWithReadLock.get(0));
-				if (old.timestamp < t.timestamp) {
-					// old will Wound t, set t to blocked and restart t with same timestamp
-					t.state = State.BLOCKED;
-					Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
-					t.pendingOperations.add(pendingOp);
-					transactionTable.put(t.id, t);
-					l.waitingList.add(t.id);
-					System.out.println("Transaction " + t.id + " was wounded by " + old.id);
-					System.out.println("Current write operation is added as pending for " + t.id);
-					System.out.println(
-							"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
-				} else {
-					// old will wait (in aborted state?)
-					old.state = State.ABORTED;
-					transactionTable.put(old.id, old);
-					l.operationType = OperationType.WRITE;
-					l.transactionIdsWithReadLock.clear();
-					l.transactionIdWithWriteLock = t.id;
-					System.out.println("Transaction " + old.id + " aborted since it was younger than " + t.id);
-					System.out.println(t.id + " has now acquired write lock on " + dataItem);
-					releaseLocks(old, dataItem, l);
-				}
+				applyWoundWait(old, t, new Operation(OperationType.WRITE, dataItem), l);
+//				if (old.timestamp < t.timestamp) {
+//					// old will Wound t, set t to blocked and restart t with same timestamp
+//					t.state = State.BLOCKED;
+//					Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
+//					t.pendingOperations.add(pendingOp);
+//					transactionTable.put(t.id, t);
+//					l.waitingList.add(t.id);
+//					System.out.println("Transaction " + t.id + " was wounded by " + old.id);
+//					System.out.println("Current write operation is added as pending for " + t.id);
+//					System.out.println(
+//							"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
+//				} else {
+//					// old will wait (in aborted state?)
+//					old.state = State.ABORTED;
+//					transactionTable.put(old.id, old);
+//					l.operationType = OperationType.WRITE;
+//					l.transactionIdsWithReadLock.clear();
+//					l.transactionIdWithWriteLock = t.id;
+//					System.out.println("Transaction " + old.id + " aborted since it was younger than " + t.id);
+//					System.out.println(t.id + " has now acquired write lock on " + dataItem);
+//					releaseLocks(old, dataItem, l);
+//				}
 			}
 		} else {
 			// multiple items have read lock apply wound-wait accordingly
@@ -304,6 +304,7 @@ public class Rigorous2pl {
 //						System.out.println(
 //								"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
 
+//						readlist.remove(readlist.indexOf(t.id));
 						readlist.remove(i);
 						break;
 					}
@@ -458,9 +459,9 @@ public class Rigorous2pl {
 		// set state to Aborted
 		t.state = State.ABORTED;
 		List<String> itemsLocked = t.itemsLocked;
-		System.out.println("Releasing items locked by transaction " + t.id);
 		for (String item : itemsLocked) {
 			// releaseLocks on all items locked by t
+			System.out.println("Releasing item " + item + " locked by transaction " + t.id);
 			releaseLocks(t, item, lockTable.get(item));
 		}
 		// update t in transactionTable
@@ -474,10 +475,10 @@ public class Rigorous2pl {
 			PriorityQueue<Integer> waitingTransactions = l.waitingList;
 			l.operationType = OperationType.UNKNOWN;
 			if (l.transactionIdsWithReadLock.size() == 1) {
-				System.out.println("Transaction " + old.id + " has release read lock on " + dataItem);
+				System.out.println("Transaction " + old.id + " has released read lock on " + dataItem);
 				l.transactionIdsWithReadLock.clear();
 			} else {
-				System.out.println("Transaction " + old.id + " has release write lock on " + dataItem);
+				System.out.println("Transaction " + old.id + " has released write lock on " + dataItem);
 			}
 			lockTable.put(dataItem, l);
 			if (waitingTransactions.isEmpty()) {
