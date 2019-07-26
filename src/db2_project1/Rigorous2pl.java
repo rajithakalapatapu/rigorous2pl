@@ -24,6 +24,7 @@ public class Rigorous2pl {
 
 	public static void main(String[] args) {
 		processFile("src/1.txt");
+
 	}
 
 	private static void processFile(String filePath) {
@@ -284,20 +285,49 @@ public class Rigorous2pl {
 				t.state = State.BLOCKED;
 				t.pendingOperations.add(new Operation(OperationType.WRITE, dataItem));
 				System.out.println("Transaction " + t.id + " has been blocked because it is younger");
-				int i = 0;
-				while (i < readlist.size()) {
-					if (t.id >= readlist.get(i)) {
-						// do not wound transactions that are older than t
-						i++;
-					}
-					if (t.id < readlist.get(i)) {
-						// only wound transactions that are younger than t
+
+				// an older transaction having read lock on dataitem can wound a younger
+				// transaction asking for write on the same dataitem
+				for (int i = 0; i < readlist.size(); i++) {
+					Transaction tOld = transactionTable.get(readlist.get(i));
+					if (tOld.itemsLocked.contains(dataItem)) {
+						// tOld will wound t
+						t.state = State.BLOCKED;
+						Operation pendingOp = new Operation(OperationType.WRITE, dataItem);
+						t.pendingOperations.add(pendingOp);
+						transactionTable.put(t.id, t);
+						l.waitingList.add(t.id);
+						System.out.println("Transaction " + t.id + " was wounded by " + tOld.id);
+						System.out.println("Current write operation is added as pending for " + t.id);
+						System.out.println(
+								"Lock for item " + dataItem + " was updated to add " + t.id + " to its waiting list");
+
 						readlist.remove(i);
-						Transaction tOld = transactionTable.get(readlist.get(i));
-						abortTransaction(tOld);
-						System.out.println("Aborting transaction " + tOld.id);
+						break;
 					}
 				}
+
+//				System.out.println(t);
+//				System.out.println(transactionTable);
+//				System.out.println(lockTable);
+//
+//				int i = 0;
+//				while (i < readlist.size()) {
+//					if (t.id > readlist.get(i)) {
+//						// do not wound transactions that are older than t
+//						i++;
+//					}
+//					if (t.id <= readlist.get(i)) {
+//						// only wound transactions that are younger than t
+//						Transaction tOld = transactionTable.get(readlist.get(i));
+//						abortTransaction(tOld);
+//						System.out.println(i);
+//						System.out.println(readlist);
+//						readlist.remove(i);
+//						System.out.println(readlist);
+//						System.out.println("Aborting transaction " + tOld.id);
+//					}
+//				}
 
 				l.transactionIdsWithReadLock = readlist;
 			}
